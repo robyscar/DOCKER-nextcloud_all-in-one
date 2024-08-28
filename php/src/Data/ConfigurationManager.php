@@ -271,17 +271,17 @@ class ConfigurationManager
      */
     public function SetDomain(string $domain) : void {
         // Validate that at least one dot is contained
-        if (strpos($domain, '.') === false) {
+        if (!str_contains($domain, '.')) {
             throw new InvalidSettingConfigurationException("Domain must contain at least one dot!");
         }
 
         // Validate that no slashes are contained
-        if (strpos($domain, '/') !== false) {
+        if (str_contains($domain, '/')) {
             throw new InvalidSettingConfigurationException("Domain must not contain slashes!");
         }
 
         // Validate that no colons are contained
-        if (strpos($domain, ':') !== false) {
+        if (str_contains($domain, ':')) {
             throw new InvalidSettingConfigurationException("Domain must not contain colons!");
         }
 
@@ -305,7 +305,7 @@ class ConfigurationManager
 
             if (empty($dnsRecordIP)) {
                 $record = dns_get_record($domain, DNS_AAAA);
-                if (!empty($record[0]['ipv6'])) {
+                if (isset($record[0]['ipv6']) && !empty($record[0]['ipv6'])) {
                     $dnsRecordIP = $record[0]['ipv6'];
                 }
             }
@@ -384,6 +384,14 @@ class ConfigurationManager
         }
 
         return $config['domain'];
+    }
+
+    public function GetBaseDN() : string {
+        $domain = $this->GetDomain();
+        if ($domain === "") {
+            return "";
+        }
+        return 'dc=' . implode(',dc=', explode('.', $domain));
     }
 
     public function GetBackupMode() : string {
@@ -742,7 +750,7 @@ class ConfigurationManager
             // Trim all unwanted chars on both sites
             $entry = trim($entry);
             if ($entry !== "") {
-                if (!preg_match("#^/[.0-1a-zA-Z/_-]+$#", $entry) && !preg_match("#^[.0-1a-zA-Z_-]+$#", $entry)) {
+                if (!preg_match("#^/[.0-9a-zA-Z/_-]+$#", $entry) && !preg_match("#^[.0-9a-zA-Z_-]+$#", $entry)) {
                     throw new InvalidSettingConfigurationException("You entered unallowed characters! Problematic is " . $entry);
                 }
                 $validDirectories .= rtrim($entry, '/') . PHP_EOL;

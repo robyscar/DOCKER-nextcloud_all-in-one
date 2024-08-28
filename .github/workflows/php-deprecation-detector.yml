@@ -17,10 +17,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Set up php8.2
+      - name: Set up php
         uses: shivammathur/setup-php@v2
         with:
-          php-version: 8.2
+          php-version: 8.3
           extensions: apcu
           coverage: none
 
@@ -28,7 +28,6 @@ jobs:
         run: |
           set -x
           cd php
-          composer global require wapmorgan/php-deprecation-detector dev-master
           composer install
           composer run php-deprecation-detector | tee -i ./phpdd.log
           if grep "Total issues:" ./phpdd.log; then

@@ -1,16 +1,22 @@
-FROM php:8.1.27-fpm-alpine3.18
+# syntax=docker/dockerfile:latest
+FROM php:8.2.22-fpm-alpine3.20
 
-ENV PHP_MEMORY_LIMIT 512M
-ENV PHP_UPLOAD_LIMIT 10G
-ENV PHP_MAX_TIME 3600
-ENV NEXTCLOUD_VERSION 27.1.6
-ENV AIO_TOKEN 123456
-ENV AIO_URL localhost
+ENV PHP_MEMORY_LIMIT=512M
+ENV PHP_UPLOAD_LIMIT=10G
+ENV PHP_MAX_TIME=3600
+ENV SOURCE_LOCATION=/usr/src/nextcloud
+
+# AIO settings start # Do not remove or change this line!
+ENV NEXTCLOUD_VERSION=29.0.4
+ENV AIO_TOKEN=123456
+ENV AIO_URL=localhost
+# AIO settings end # Do not remove or change this line!
 
 COPY --chmod=775 *.sh /
 COPY --chmod=774 upgrade.exclude /upgrade.exclude
 COPY config/*.php /
 COPY supervisord.conf /supervisord.conf
+COPY root.motd /root.motd
 
 VOLUME /mnt/ncdata
 VOLUME /var/www/html
@@ -18,10 +24,9 @@ VOLUME /var/www/html
 # Custom: change id of www-data user as it needs to be the same like on old installations
 # hadolint ignore=SC2086,DL3003
 RUN set -ex; \
+    apk upgrade --no-cache -a; \
     apk add --no-cache shadow; \
     deluser www-data; \
-    groupmod -g 333 xfs; \
-    usermod -u 333 -g 333 xfs; \
     addgroup -g 33 -S www-data; \
     adduser -u 33 -D -S -G www-data www-data; \
     \
@@ -38,6 +43,9 @@ RUN set -ex; \
         gmp-dev \
         icu-dev \
         imagemagick-dev \
+        imagemagick-svg \
+        imagemagick-heic \
+        imagemagick-tiff \
         libevent-dev \
         libjpeg-turbo-dev \
         libmcrypt-dev \
@@ -52,6 +60,7 @@ RUN set -ex; \
     ; \
     \
     docker-php-ext-configure gd --with-freetype --with-jpeg --with-webp; \
+    docker-php-ext-configure ftp --with-openssl-dir=/usr; \
     docker-php-ext-configure ldap; \
     docker-php-ext-install -j "$(nproc)" \
         bcmath \
@@ -68,12 +77,16 @@ RUN set -ex; \
     ; \
     \
 # pecl will claim success even if one install fails, so we need to perform each install separately
+    pecl install igbinary-3.2.16; \ 
     pecl install APCu-5.1.23; \
-    pecl install memcached-3.2.0; \
-    pecl install redis-6.0.2; \
+    pecl install memcached-3.2.0 \
+        --configureoptions 'enable-memcached-igbinary="yes"'; \
+    pecl install redis-6.0.2 \
+        --configureoptions 'enable-redis-igbinary="yes" enable-redis-zstd="yes" enable-redis-lz4="yes"'; \
     pecl install imagick-3.7.0; \
     \
     docker-php-ext-enable \
+        igbinary \
         apcu \
         memcached \
         redis \
@@ -88,6 +101,11 @@ RUN set -ex; \
     )"; \
     apk add --no-cache --virtual .nextcloud-phpext-rundeps $runDeps; \
     apk del .build-deps; \
+    \
+    { \
+        echo 'apc.serializer=igbinary'; \
+        echo 'session.serialize_handler=igbinary'; \
+    } >> /usr/local/etc/php/conf.d/docker-php-ext-igbinary.ini; \
     \
 # set recommended PHP.ini settings
 # see https://docs.nextcloud.com/server/stable/admin_manual/configuration_server/server_tuning.html#enable-php-opcache
@@ -108,12 +126,22 @@ RUN set -ex; \
         echo 'post_max_size=${PHP_UPLOAD_LIMIT}'; \
         echo 'max_execution_time=${PHP_MAX_TIME}'; \
         echo 'max_input_time=${PHP_MAX_TIME}'; \
+        echo 'default_socket_timeout=600'; \
     } > /usr/local/etc/php/conf.d/nextcloud.ini; \
+    \
+    { \
+        echo 'session.save_handler = redis'; \
+        echo 'session.save_path = "tcp://${REDIS_HOST}:6379?auth=${REDIS_HOST_PASSWORD}"'; \
+        echo 'redis.session.locking_enabled = 1'; \
+        echo 'redis.session.lock_retries = -1'; \
+        echo 'redis.session.lock_wait_time = 10000'; \
+    } > /usr/local/etc/php/conf.d/redis-session.ini; \
     \
     mkdir -p /var/www/data; \
     chown -R www-data:root /var/www; \
     chmod -R g=u /var/www; \
     \
+# Download Nextcloud archive start # Do not remove or change this line!
     apk add --no-cache --virtual .fetch-deps \
         bzip2 \
         gnupg \
@@ -134,8 +162,9 @@ RUN set -ex; \
     mkdir -p /usr/src/nextcloud/custom_apps; \
     chmod +x /usr/src/nextcloud/occ; \
     mkdir -p /usr/src/nextcloud/config; \
-    mv /*.php /usr/src/nextcloud/config/; \
     apk del .fetch-deps; \
+# Download Nextcloud archive end # Do not remove or change this line!
+    mv /*.php /usr/src/nextcloud/config/; \
     \
 # Template from https://github.com/nextcloud/docker/blob/master/.examples/dockerfiles/full/fpm-alpine/Dockerfile
     apk add --no-cache \
@@ -161,6 +190,7 @@ RUN set -ex; \
         bz2 \
         imap \
         pgsql \
+        ftp \
     ; \
     pecl install smbclient; \
     docker-php-ext-enable smbclient; \
@@ -178,6 +208,8 @@ RUN set -ex; \
     /var/log/supervisord \
     /var/run/supervisord \
     ; \
+    chown www-data:root -R /var/log/supervisord; \
+    chown www-data:root -R /var/run/supervisord; \
     \
     apk add --no-cache \
         bash \
@@ -192,6 +224,9 @@ RUN set -ex; \
         nodejs \
         bind-tools \
         imagemagick \
+        imagemagick-svg \
+        imagemagick-heic \
+        imagemagick-tiff \
         coreutils; \
     \
     grep -q '^pm = dynamic' /usr/local/etc/php-fpm.d/www.conf; \
@@ -202,18 +237,21 @@ RUN set -ex; \
     sed -i 's/^pm.max_children =.*/pm.max_children = 5000/' /usr/local/etc/php-fpm.d/www.conf; \
     sed -i 's|access.log = /proc/self/fd/2|access.log = /proc/self/fd/1|' /usr/local/etc/php-fpm.d/docker.conf; \
     \
+# AIO cloning start # Do not remove or change this line!
     rm -rf /tmp/nextcloud-aio && \
     mkdir -p /tmp/nextcloud-aio && \
     cd /tmp/nextcloud-aio && \
     git clone https://github.com/nextcloud-releases/all-in-one.git --depth 1 .; \
     mkdir -p /usr/src/nextcloud/apps/nextcloud-aio; \
     cp -r ./app/* /usr/src/nextcloud/apps/nextcloud-aio/; \
+    echo "[ -n \"\$TERM\" ] && cat /root.motd" >> /root/.bashrc; \
+# AIO cloning end # Do not remove or change this line!
     \
     chown www-data:root -R /usr/src && \
     chown www-data:root -R /usr/local/etc/php/conf.d && \
     chown www-data:root -R /usr/local/etc/php-fpm.d && \
     chmod -R 777 /tmp; \
-    rm -r /usr/src/nextcloud/apps/updatenotification; \
+    rm -rf /usr/src/nextcloud/apps/updatenotification; \
     \
     mkdir -p /nc-updater; \
     chown -R www-data:www-data /nc-updater; \

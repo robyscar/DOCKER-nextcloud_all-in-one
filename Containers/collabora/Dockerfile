@@ -1,13 +1,14 @@
+# syntax=docker/dockerfile:latest
 # From a file located probably somewhere here: https://github.com/CollaboraOnline/online/tree/master/docker
-FROM collabora/code:23.05.7.5.1
+FROM collabora/code:24.04.6.2.1
 
 USER root
+ARG DEBIAN_FRONTEND=noninteractive
 
 # hadolint ignore=DL3008
 RUN set -ex; \
     \
     apt-get update; \
-    export DEBIAN_FRONTEND=noninteractive; \
     apt-get install -y --no-install-recommends \
         tzdata \
         netcat-openbsd \
@@ -16,5 +17,5 @@ RUN set -ex; \
 
 USER 100
 
-HEALTHCHECK CMD nc -z localhost 9980 || exit 1
+HEALTHCHECK CMD nc -z 127.0.0.1 9980 || exit 1
 LABEL com.centurylinklabs.watchtower.enable="false"

@@ -1,10 +1,12 @@
 # Reverse Proxy Documentation
 
+**Note:** The maintainers of AIO noticed that this documentation could be improved to make it easier to follow. All contributions that improve this are very welcome!
+
 A [reverse proxy](https://en.wikipedia.org/wiki/Reverse_proxy) is basically a web server that enables computers on the internet to access a service in a [private subnet](https://en.wikipedia.org/wiki/Private_network).
 
 **Please note:** Publishing the AIO interface with a valid certificate to the public internet is **not** the goal of this documentation! Instead, the main goal is to publish Nextcloud with a valid certificate to the public internet which is **not** running inside the mastercontainer but in a different container! If you need a valid certificate for the AIO interface, see [point 5](#5-optional-get-a-valid-certificate-for-the-aio-interface).
 
-In order to run Nextcloud behind a web server or reverse proxy (like Apache, Nginx, Cloudflare Tunnel and else), you need to specify the port that AIO's Apache container shall use, add a specific config to your web server or reverse proxy and modify the startup command a bit. All examples below will use port `11000` as example `APACHE_PORT` which will be exposed on the host to receive unencrypted HTTP traffic from the reverse proxy. **Advice:** If you need https between Nextcloud and the reverse proxy because it is running on a different server in the same network, simply add another reverse proxy to the chain that runs on the same server like AIO and takes care of https proxying (most likely via self-signed cert). Another option is to create a VPN between the server that runs AIO and the server that runs the reverse proxy which takes care of encrypting the connection.
+In order to run Nextcloud behind a web server or reverse proxy (like Apache, Nginx, Caddy, Cloudflare Tunnel and else), you need to specify the port that AIO's Apache container shall use, add a specific config to your web server or reverse proxy and modify the startup command a bit. All examples below will use port `11000` as example `APACHE_PORT` which will be exposed on the host to receive unencrypted HTTP traffic from the reverse proxy. **Advice:** If you need https between Nextcloud and the reverse proxy because it is running on a different server in the same network, simply add another reverse proxy to the chain that runs on the same server like AIO and takes care of https proxying (most likely via self-signed cert). Another option is to create a VPN between the server that runs AIO and the server that runs the reverse proxy which takes care of encrypting the connection.
 
 **Attention:** The process to run Nextcloud behind a reverse proxy consists of at least steps 1, 2 and 4:
 1. **Configure the reverse proxy! See [point 1](#1-configure-the-reverse-proxy)**
@@ -80,6 +82,7 @@ Add this as a new Apache site config:
     # Reverse proxy based on https://httpd.apache.org/docs/current/mod/mod_proxy_wstunnel.html
     RewriteEngine On
     ProxyPreserveHost On
+    RequestHeader set X-Real-IP %{REMOTE_ADDR}s
     AllowEncodedSlashes NoDecode
     
     ProxyPass / http://localhost:11000/ nocanon
@@ -88,7 +91,7 @@ Add this as a new Apache site config:
     RewriteCond %{HTTP:Upgrade} websocket [NC]
     RewriteCond %{HTTP:Connection} upgrade [NC]
     RewriteCond %{THE_REQUEST} "^[a-zA-Z]+ /(.*) HTTP/\d+(\.\d+)?$"
-    RewriteRule .? "ws://localhost:11000/%1" [P,L]
+    RewriteRule .? "ws://localhost:11000/%1" [P,L,UnsafeAllow3F]
 
     # Enable h2, h2c and http1.1
     Protocols h2 h2c http/1.1
@@ -102,6 +105,10 @@ Add this as a new Apache site config:
     SSLCipherSuite          ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384:DHE-RSA-CHACHA20-POLY1305
     SSLHonorCipherOrder     off
     SSLSessionTickets       off
+
+    # If running apache on a subdomain (eg. nextcloud.example.com) of a domain that already has an wildcard ssl certificate from certbot on this machine, 
+    # the <your-nc-domain> in the below lines should be replaced with just the domain (eg. example.com), not the subdomain. 
+    # In this case the subdomain should already be secured without additional actions
     SSLCertificateFile /etc/letsencrypt/live/<your-nc-domain>/fullchain.pem
     SSLCertificateKeyFile /etc/letsencrypt/live/<your-nc-domain>/privkey.pem
 
@@ -113,6 +120,8 @@ Add this as a new Apache site config:
 
     # Support big file uploads
     LimitRequestBody 0
+    Timeout 86400
+    ProxyTimeout 86400
 </VirtualHost>
 ```
 
@@ -295,7 +304,7 @@ backend Nextcloud
 
 </details>
 
-### Nginx
+### Nginx, Freenginx, Openresty
 
 <details>
 
@@ -357,6 +366,9 @@ server {
         proxy_set_header Connection $connection_upgrade;
     }
 
+    # If running nginx on a subdomain (eg. nextcloud.example.com) of a domain that already has an wildcard ssl certificate from certbot on this machine, 
+    # the <your-nc-domain> in the below lines should be replaced with just the domain (eg. example.com), not the subdomain. 
+    # In this case the subdomain should already be secured without additional actions
     ssl_certificate /etc/letsencrypt/live/<your-nc-domain>/fullchain.pem;   # managed by certbot on host machine
     ssl_certificate_key /etc/letsencrypt/live/<your-nc-domain>/privkey.pem; # managed by certbot on host machine
 
@@ -627,6 +639,74 @@ The examples below define the dynamic configuration in YAML files. If you rather
 
 </details>
 
+### IIS with ARR and URL Rewrite
+
+<details>
+
+<summary>click here to expand</summary>
+
+**Disclaimer:** It might be possible that the config below is not working 100% correctly, yet. Improvements to it are very welcome!
+
+**Please note:** Using IIS as a reverse proxy comes with some limitations:
+- A maximum upload size of 4GiB, in the example configuration below the limit is set to 2GiB.
+
+
+#### Prerequisites
+1. **Windows Server** with IIS installed.
+2. [**Application Request Routing (ARR)**](https://www.iis.net/downloads/microsoft/application-request-routing) and [**URL Rewrite**](https://www.iis.net/downloads/microsoft/url-rewrite) modules installed.
+3. [**WebSocket Protocol**](https://learn.microsoft.com/en-us/iis/configuration/system.webserver/websocket) feature enabled.
+
+For information on how to set up IIS as a reverse proxy please refer to [this](https://learn.microsoft.com/en-us/iis/extensions/url-rewrite-module/reverse-proxy-with-url-rewrite-v2-and-application-request-routing).
+There are also information on how to use the IIS Manager [here](https://learn.microsoft.com/en-us/iis/).
+
+The following configuration example assumes the following:
+* A site has been created that is configured with HTTPS support and the desired host name.
+* A server farm named `nc-server-farm` has been created and is pointing to the Nextcloud server.
+* No global Rewrite Rules has been created for the `nc-server-farm` server farm.
+
+Add the following `web.config` file to the root of the site you created as the reverse proxy.
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+  <system.web>
+    <!-- Allow all urls -->
+    <httpRuntime requestValidationMode="2.0" requestPathInvalidCharacters="" />
+  </system.web>
+  <system.webServer>
+    <rewrite>
+      <rules>
+        <!-- Force https -->
+        <rule name="Https" stopProcessing="true">
+          <match url="(.*)" />
+          <conditions>
+            <add input="{HTTPS}" pattern="^OFF$" />
+          </conditions>
+          <action type="Redirect" url="https://{HTTP_HOST}/{REQUEST_URI}" appendQueryString="false" />
+        </rule>
+        <!-- Redirect to internal nextcloud server -->
+        <rule name="To nextcloud" stopProcessing="true">
+          <match url="(.*)" />
+          <conditions>
+            <add input="{HTTPS}" pattern="^ON$" />
+          </conditions>
+          <action type="Rewrite" url="http://nc-server-farm:11000/{UNENCODED_URL}" appendQueryString="false" />
+        </rule>
+      </rules>
+    </rewrite>
+    <security>
+      <!-- Increase upload limit to 2GiB -->
+      <requestFiltering allowDoubleEscaping="true">
+        <requestLimits maxAllowedContentLength="2147483648" />
+      </requestFiltering>
+    </security>
+  </system.webServer>
+</configuration>
+
+```
+⚠️ **Please note:** Look into [this](#adapting-the-sample-web-server-configurations-below) to adapt the above example configuration.
+
+</details>
+
 ### Others
 
 <details>
@@ -699,7 +779,9 @@ Simply translate the docker run command into a docker-compose file. You can have
 Use this environment variable during the initial startup of the mastercontainer to make the apache container only listen on localhost: `--env APACHE_IP_BINDING=127.0.0.1`. **Attention:** This is only recommended to be set if you use `localhost` in your reverse proxy config to connect to your AIO instance. If you use an ip-address instead of localhost, you should set it to `0.0.0.0`.
 
 ## 4. Open the AIO interface.
-After starting AIO, you should be able to access the AIO Interface via `https://ip.address.of.the.host:8080`. Enter your domain that you've entered in the reverse proxy config and you should be done. Please do not forget to open/forward port `3478/TCP` and `3478/UDP` in your firewall/router for the Talk container!
+After starting AIO, you should be able to access the AIO Interface via `https://ip.address.of.the.host:8080`.<br>
+⚠️ **Important:** do always use an ip-address if you access this port and not a domain as HSTS might block access to it later! (It is also expected that this port uses a self-signed certificate due to security concerns which you need to accept in your browser)<br>
+Enter your domain in the AIO interface that you've used in the reverse proxy config and you should be done. Please do not forget to open/forward port `3478/TCP` and `3478/UDP` in your firewall/router for the Talk container!
 
 ## 5. Optional: get a valid certificate for the AIO interface
 

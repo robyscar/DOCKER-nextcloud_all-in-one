@@ -13,7 +13,7 @@ class DockerController
 {
     private DockerActionManager $dockerActionManager;
     private ContainerDefinitionFetcher $containerDefinitionFetcher;
-    private const TOP_CONTAINER = 'nextcloud-aio-apache';
+    private const string TOP_CONTAINER = 'nextcloud-aio-apache';
     private ConfigurationManager $configurationManager;
 
     public function __construct(
@@ -45,6 +45,15 @@ class DockerController
             if ($this->dockerActionManager->GetDatabasecontainerExitCode() > 0) {
                 $pullImage = false;
                 error_log('Not pulling the latest database image because the container was not correctly shut down.');
+            }
+        }
+
+        // Check if docker hub is reachable in order to make sure that we do not try to pull an image if it is down 
+        // and try to mitigate issues that are arising due to that
+        if ($pullImage) {
+            if (!$this->dockerActionManager->isDockerHubReachable($container)) {
+                $pullImage = false;
+                error_log('Not pulling the image for the ' . $container->GetContainerName() . ' container because docker hub does not seem to be reachable.');
             }
         }
 
@@ -164,7 +173,7 @@ class DockerController
         }
 
         if (isset($request->getParsedBody()['install_latest_major'])) {
-            $installLatestMajor = 28;
+            $installLatestMajor = 29;
         } else {
             $installLatestMajor = "";
         }

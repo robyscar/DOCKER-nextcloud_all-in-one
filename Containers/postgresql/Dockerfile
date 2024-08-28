@@ -1,11 +1,13 @@
-# From https://github.com/docker-library/postgres/blob/master/15/alpine/Dockerfile
-FROM postgres:15.5-alpine
+# syntax=docker/dockerfile:latest
+# From https://github.com/docker-library/postgres/blob/master/16/alpine3.20/Dockerfile
+FROM postgres:16.4-alpine
 
 COPY --chmod=775 start.sh /start.sh
 COPY --chmod=775 healthcheck.sh /healthcheck.sh
 COPY --chmod=775 init-user-db.sh /docker-entrypoint-initdb.d/init-user-db.sh
 
 RUN set -ex; \
+    apk upgrade --no-cache -a; \
     apk add --no-cache \
         bash \
         openssl \
@@ -30,7 +32,10 @@ RUN set -ex; \
     \
 # Give root a random password
     echo "root:$(openssl rand -base64 12)" | chpasswd; \
-    apk --no-cache del openssl;
+    apk --no-cache del openssl; \
+    \
+# Get rid of unused binaries
+    rm -f /usr/local/bin/gosu /usr/local/bin/su-exec;
 
 VOLUME /mnt/data
 
